@@ -21,6 +21,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
 
 <style>
   :root {
@@ -1620,7 +1621,7 @@ async function hAbrirScanner() {
     v.srcObject = hScan.stream;
     await v.play();
     hScan.det = null;
-    if ('BarcodeDetector' in window) { try { hScan.det = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { hScan.det = null; } }
+    if ('BarcodeDetector' in window) { try { hScan.det = novoDetectorCodigos(); } catch (e) { hScan.det = null; } }
     hScan.loop = true;
     hLoopScan();
   } catch (e) {
@@ -1641,7 +1642,7 @@ function hLoopScan() {
     } else if (window.jsQR) {
       const im = x.getImageData(0, 0, w, h);
       const r = jsQR(im.data, w, h, { inversionAttempts: 'dontInvert' });
-      if (r && r.data) hLeuQR(r.data);
+      if (r && r.data) hLeuQR(r.data); else { const z = zxLer(im, w, h); if (z) hLeuQR(z); }
     }
   }
   setTimeout(hLoopScan, 200);
@@ -1650,9 +1651,9 @@ function hLeuQR(texto) {
   const agora = Date.now();
   if (texto === hScan.last && agora - hScan.lastTs < 2500) return;
   hScan.last = texto; hScan.lastTs = agora;
-  const m = String(texto).trim().match(/^0*(\d{1,3})$/);
-  if (!m) { document.getElementById('h-scan-msg').textContent = 'QR não reconhecido: ' + String(texto).slice(0, 30); return; }
-  hEntradaComanda(parseInt(m[1], 10), true);
+  const nC = comandaDeTexto(texto);
+  if (nC == null) { document.getElementById('h-scan-msg').textContent = 'Código não reconhecido: ' + String(texto).slice(0, 30); return; }
+  hEntradaComanda(nC, true);
 }
 function hPararScanner() {
   hScan.loop = false;
@@ -1943,7 +1944,7 @@ async function cIniciarScanner() {
     v.srcObject = cScan.stream;
     await v.play();
     cScan.det = null;
-    if ('BarcodeDetector' in window) { try { cScan.det = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { cScan.det = null; } }
+    if ('BarcodeDetector' in window) { try { cScan.det = novoDetectorCodigos(); } catch (e) { cScan.det = null; } }
     cScan.loop = true;
     cLoopScan();
   } catch (e) {
@@ -1969,7 +1970,7 @@ function cLoopScan() {
     } else if (window.jsQR) {
       const im = x.getImageData(0, 0, w, h);
       const r = jsQR(im.data, w, h, { inversionAttempts: 'dontInvert' });
-      if (r && r.data) cLeuQR(r.data);
+      if (r && r.data) cLeuQR(r.data); else { const z = zxLer(im, w, h); if (z) cLeuQR(z); }
     }
   }
   setTimeout(cLoopScan, 200);
@@ -1978,9 +1979,9 @@ function cLeuQR(texto) {
   const agora = Date.now();
   if (texto === cScan.last && agora - cScan.lastTs < 2500) return;
   cScan.last = texto; cScan.lastTs = agora;
-  const m = String(texto).trim().match(/^0*(\d{1,3})$/);
-  if (!m) { document.getElementById('c-msg').textContent = 'QR não reconhecido: ' + String(texto).slice(0, 30); return; }
-  cEntrada(parseInt(m[1], 10));
+  const nC = comandaDeTexto(texto);
+  if (nC == null) { document.getElementById('c-msg').textContent = 'Código não reconhecido: ' + String(texto).slice(0, 30); return; }
+  cEntrada(nC);
 }
 function cOkNum() {
   const el = document.getElementById('c-num');
@@ -2090,6 +2091,40 @@ function cRenderLista() {
     }
   }, true);
 })();
+
+// ── Leitura de QR e códigos de barras (comanda impressa em barras) ──
+function novoDetectorCodigos() {
+  const todos = ['qr_code','code_128','code_39','code_93','codabar','itf','ean_13','ean_8','upc_a','upc_e'];
+  try { return new BarcodeDetector({ formats: todos }); } catch (e) {}
+  try { return new BarcodeDetector({ formats: ['qr_code','code_128','code_39'] }); } catch (e) {}
+  try { return new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) {}
+  return null;
+}
+function comandaDeTexto(t) {
+  const s = String(t).trim();
+  const m = s.match(/^0*(\d{1,3})$/);
+  if (m) return parseInt(m[1], 10);
+  if (/^\d{4,}$/.test(s)) { const n = parseInt(s.slice(-3), 10); if (n >= 1 && n <= H_MAX) return n; }
+  return null;
+}
+let _zxR = null;
+function zxLer(im, w, h) {
+  if (!window.ZXing) return null;
+  try {
+    if (!_zxR) {
+      const hints = new Map();
+      const F = ZXing.BarcodeFormat;
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [F.CODE_128, F.CODE_39, F.CODE_93, F.ITF, F.EAN_13, F.EAN_8, F.CODABAR, F.UPC_A]);
+      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+      _zxR = new ZXing.MultiFormatReader();
+      _zxR.setHints(hints);
+    }
+    const d = im.data, lum = new Uint8ClampedArray(w * h);
+    for (let i = 0, j = 0; i < lum.length; i++, j += 4) lum[i] = (d[j] * 299 + d[j + 1] * 587 + d[j + 2] * 114) / 1000;
+    const src = new ZXing.RGBLuminanceSource(lum, w, h);
+    return _zxR.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src))).getText();
+  } catch (e) { return null; }
+}
 </script>
 </body>
 </html>
